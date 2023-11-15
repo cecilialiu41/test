@@ -30,6 +30,7 @@ BoroughMap <- LondonBoroughs %>%
 
 ##Now get the location of all Blue Plaques in the City
 BluePlaques <- st_read("https://s3.eu-west-2.amazonaws.com/openplaques/open-plaques-london-2018-04-08.geojson")
+BluePlaques<-st_transform(BluePlaques,27700)
 BluePlaques <- st_read(here::here("prac6_data",
                                   "open-plaques-london-2018-04-08.geojson")) %>%
   st_transform(.,27700)
@@ -42,3 +43,207 @@ tm_shape(BluePlaques) +
   tm_dots(col = "blue")
 ```
 
+
+
+``` {r data cleaning & spatial subsetting}
+#remove duplicates
+library(tidyverse)
+library(sf)
+BluePlaques <- distinct(BluePlaques)
+
+BluePlaquesSub <- BluePlaques[BoroughMap,]
+#check to see that they've been removed
+tmap_mode("plot")
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+
+# add sparse=false to get the complete matrix.
+intersect_indices <-st_intersects(BoroughMap, BluePlaques)
+```
+
+
+```{r spatial joining}
+Londonborough <- st_read(here::here("wk1_Practical",
+                                    "statistical-gis-boundaries-london", 
+                                    "ESRI", 
+                                    "London_Borough_Excluding_MHW.shp"))%>%
+  st_transform(., 27700)
+
+OSM <- st_read(here::here("greater-london-latest-free.shp", 
+                          "gis_osm_pois_a_free_1.shp")) %>%
+  st_transform(., 27700) %>%
+  #select hotels only
+  filter(fclass == 'hotel')
+
+join_example <-  st_join(OSM, Londonborough) #geometry has to be the same to join
+
+nrow(join_example)
+
+
+# read in the .csv
+# and make it into spatial data
+
+Airbnb <- read_csv("listings.csv") %>%
+  st_as_sf(., coords = c("longitude", "latitude"), 
+                   crs = 4326) %>%
+    st_transform(., 27700)%>%
+    #select entire places that are available all year
+    filter(room_type == 'Entire home/apt' & availability_365 =='365')
+
+
+# make a function for the join
+# functions are covered in practical 7
+# but see if you can work out what is going on
+# hint all you have to do is replace data1 and data2
+# with the data you want to use
+
+Joinfun <- function(data1, data2){
+
+output<- data1%>%
+  st_join(Londonborough,.) %>%
+  add_count(GSS_CODE, name="hotels_in_borough") 
+
+  return(output)
+}
+
+# use the function for hotels
+Hotels <- Joinfun(OSM, Londonborough)
+
+# then for airbnb
+Airbnb <- Joinfun(Airbnb, Londonborough)
+ 
+Hotels <- Hotels %>%
+  #at the moment each hotel is a row for the borough
+  #we just one one row that has number of airbnbs
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+
+Airbnb <- Airbnb %>%
+  group_by(., GSS_CODE, NAME)%>%
+  summarise(`Accomodation count` = unique(hotels_in_borough))
+
+ left_join<- left_join(Hotels, Airbnb,
+            by = c("GSS_CODE" = "GSS_CODE"))
+
+ all_accomodation <- st_join(Hotels, Airbnb)
+
+head(all_accomodation)
+
+all_accomodation <- st_join(Hotels, Airbnb, join = st_equals)
+
+head(all_accomodation)
+```
+
+
+```{r study area}
+#extract the borough
+
+# select by attribute
+Harrow <- BoroughMap %>%
+  filter(., NAME=="Harrow")
+
+#Check to see that the correct borough has been pulled out
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5)
+
+#clip the data to our single borough
+BluePlaquesSub <- BluePlaques[Harrow,]
+#check that it's worked
+tmap_mode("plot")
+tm_shape(Harrow) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaquesSub) +
+  tm_dots(col = "blue")
+
+#now set a window as the borough boundary
+window <- as.owin(Harrow)
+plot(window)
+
+#create a sp object
+BluePlaquesSub<- BluePlaquesSub %>%
+  as(., 'Spatial')
+#create a ppp object
+BluePlaquesSub.ppp <- ppp(x=BluePlaquesSub@coords[,1],
+                          y=BluePlaquesSub@coords[,2],
+                          window=window)
+
+#understand the data
+BluePlaquesSub@coords[,1]
+
+#the new ppp object
+BluePlaquesSub.ppp %>%
+  plot(.,pch=16,cex=0.5, 
+       main="Blue Plaques Harrow")
+```
+
+``` {r point pattern analysis}
+#kernel density estimation 
+BluePlaquesSub.ppp %>%
+  density(., sigma=500) %>%
+  plot()
+
+#try different diameter
+BluePlaquesSub.ppp %>%
+  density(., sigma=1000) %>%
+  plot()
+
+
+#quadrant analysis 
+#First plot the points
+plot(BluePlaquesSub.ppp,
+     pch=16,
+     cex=0.5, 
+     main="Blue Plaques in Harrow")
+
+#now count the points in that fall in a 6 x 6
+#grid overlaid across the window
+BluePlaquesSub.ppp2<-BluePlaquesSub.ppp %>%
+  quadratcount(., nx = 6, ny = 6)%>%
+    plot(., add=T, col="red")
+
+#run the quadrat count
+Qcount <- BluePlaquesSub.ppp %>%
+  quadratcount(.,nx = 6, ny = 6) %>%
+  as.data.frame() %>%
+  dplyr::count(Var1=Freq)%>%
+  dplyr::rename(Freqquadratcount=n)
+
+#needs to be number subject
+Qcount %>% 
+  summarise_all(class)
+
+sums <- Qcount %>%
+  #calculate the total blue plaques (Var * Freq)
+  mutate(total = Var1 * Freqquadratcount) %>%
+  dplyr::summarise(across(everything(), sum))%>%
+  dplyr::select(-Var1) 
+
+lambda<- Qcount%>%
+  #calculate lambda
+  mutate(total = Var1 * Freqquadratcount)%>%
+  dplyr::summarise(across(everything(), sum)) %>%
+  mutate(lambda=total/Freqquadratcount) %>%
+  dplyr::select(lambda)%>%
+  pull(lambda)
+
+QCountTable <- Qcount %>%
+  mutate(Pr=((lambda^Var1)*exp(-lambda))/factorial(Var1))%>%
+  #now calculate the expected counts based on our total number of plaques
+  #and save them to the table
+  mutate(Expected= (round(Pr * sums$Freqquadratcount, 0)))
+
+#Compare the frequency distributions of the observed and expected point patterns
+plot(c(1,5),c(0,14), type="n",
+xlab="Number of Blue Plaques (Red=Observed,Blue=Expected)", 
+     ylab="Frequency of Occurances")
+points(QCountTable$Freqquadratcount, 
+       col="Red", 
+       type="o", 
+       lwd=3)
+points(QCountTable$Expected, col="Blue", 
+       type="o", 
+       lwd=3)
+
+```
