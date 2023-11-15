@@ -1,0 +1,44 @@
+---
+title: "Spatial Analysis"
+author: "Cecilia Liu"
+date: "2023-11-15"
+output: html_document
+---
+
+
+```{r preparation}
+
+#first library a few packages that we will use during the practical
+#note you may need to install them first...
+install.packages("spatstat")
+library(spatstat)
+library(here)
+library(sp)
+library(rgeos)
+library(maptools)
+library(tmap)
+library(sf)
+library(geojson)
+library(geojsonio)
+library(tmaptools)
+
+LondonBoroughs <- st_read("wk1_Practical/statistical-gis-boundaries-london/ESRI/London_Borough_Excluding_MHW.shp")
+library(stringr)
+BoroughMap <- LondonBoroughs %>%
+  dplyr::filter(str_detect(GSS_CODE, "^E09"))%>%
+  st_transform(., 27700)
+
+##Now get the location of all Blue Plaques in the City
+BluePlaques <- st_read("https://s3.eu-west-2.amazonaws.com/openplaques/open-plaques-london-2018-04-08.geojson")
+BluePlaques <- st_read(here::here("prac6_data",
+                                  "open-plaques-london-2018-04-08.geojson")) %>%
+  st_transform(.,27700)
+
+#plot the blue plaques in the city
+tmap_mode("plot")
+tm_shape(BoroughMap) +
+  tm_polygons(col = NA, alpha = 0.5) +
+tm_shape(BluePlaques) +
+  tm_dots(col = "blue")
+```
+
