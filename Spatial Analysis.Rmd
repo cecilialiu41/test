@@ -245,5 +245,94 @@ points(QCountTable$Freqquadratcount,
 points(QCountTable$Expected, col="Blue", 
        type="o", 
        lwd=3)
+teststats <- quadrat.test(BluePlaquesSub.ppp, nx = 6, ny = 6)
 
+plot(BluePlaquesSub.ppp,pch=16,cex=0.5, main="Blue Plaques in Harrow")
+plot(teststats, add=T, col = "red")
+```
+
+```{r Ripley’s K & DBSCAN}
+K <- BluePlaquesSub.ppp %>%
+  Kest(., correction="border") %>%
+  plot()
+
+Kval <- as.data.frame(Kest(BluePlaquesSub.ppp, correction = "Ripley"))
+
+#DBSCAN alternative to ripley's k 
+library(raster)
+install.packages("fpc")
+library(fpc)
+
+#first check the coordinate reference system of the Harrow spatial polygon:
+st_geometry(BoroughMap)
+
+#first extract the points from the spatial points data frame
+BluePlaquesSubPoints <- BluePlaquesSub %>%
+  coordinates(.)%>%
+  as.data.frame()
+
+#now run the dbscan analysis
+db <- BluePlaquesSubPoints %>%
+  fpc::dbscan(.,eps = 700, MinPts = 4)
+
+#now plot the results
+plot(db, BluePlaquesSubPoints, main = "DBSCAN Output", frame = F)
+plot(BoroughMap$geometry, add=T)
+
+install.packages("dbscan")
+library(dbscan)
+
+BluePlaquesSubPoints%>%
+  dbscan::kNNdistplot(.,k=4)
+
+library(ggplot2)
+db
+db$cluster
+BluePlaquesSubPoints<- BluePlaquesSubPoints %>%
+  mutate(dbcluster=db$cluster)
+
+chulls <- BluePlaquesSubPoints %>%
+  group_by(dbcluster) %>%
+  dplyr::mutate(hull = 1:n(),
+  hull = factor(hull, chull(coords.x1, coords.x2)))%>%
+  arrange(hull)
+
+#chulls2 <- ddply(BluePlaquesSubPoints, .(dbcluster), 
+              #  function(df) df[chull(df$coords.x1, df$coords.x2), ])
+
+#As 0 isn’t actually a cluster (it’s all points that aren’t in a cluster) drop it from the dataframe
+chulls <- chulls %>%
+  filter(dbcluster >=1)
+
+
+dbplot <- ggplot(data=BluePlaquesSubPoints, 
+                 aes(coords.x1,coords.x2, colour=dbcluster, fill=dbcluster)) 
+#add the points in
+dbplot <- dbplot + geom_point()
+#now the convex hulls
+dbplot <- dbplot + geom_polygon(data = chulls, 
+                                aes(coords.x1,coords.x2, group=dbcluster), 
+                                alpha = 0.5) 
+#now plot, setting the coordinates to scale correctly and as a black and white plot 
+#(just for the hell of it)...
+dbplot + theme_bw() + coord_equal()
+
+###add a basemap
+##First get the bbox in lat long for Harrow
+HarrowWGSbb <- Harrow %>%
+  st_transform(., 4326)%>%
+  st_bbox()
+
+install.packages("OpenStreetMap")
+library(OpenStreetMap)
+
+basemap <- OpenStreetMap::openmap(c(51.5549876,-0.4040502),c(51.6405356,-0.2671315),
+                         zoom=NULL,
+                         "osm")
+
+  # convert the basemap to British National Grid
+basemap_bng <- openproj(basemap, projection="+init=epsg:27700")
+
+#trying out a new commit
+#making some new lines
 ```
